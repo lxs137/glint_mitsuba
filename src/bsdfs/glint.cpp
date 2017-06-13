@@ -8,14 +8,39 @@
 #include "microfacet.h"
 #include "ior.h"
 
-
 MTS_NAMESPACE_BEGIN
+
+class PerspectiveCameraImpl;
+
 class Glint : public BSDF
 {
 public:
-    Glint(const Properties &prop): BSDF(prop) {
+    Glint(const Properties &prop): BSDF(prop)
+    {
+        ref<FileResolver> fResolver = Thread::getThread()->getFileResolver();
 
-        MicrofacetDistribution distribution(prop);
+        m_specularReflectance = new ConstantSpectrumTexture(
+                prop.getSpectrum("specularReflectance", Spectrum(1.0f)));
+
+        std::string materialName = prop.getString("material", "Cu");
+
+        Spectrum intEta, intK;
+        if (boost::to_lower_copy(materialName) == "none") {
+            intEta = Spectrum(0.0f);
+            intK = Spectrum(1.0f);
+        } else {
+            intEta.fromContinuousSpectrum(InterpolatedSpectrum(
+                    fResolver->resolve("data/ior/" + materialName + ".eta.spd")));
+            intK.fromContinuousSpectrum(InterpolatedSpectrum(
+                    fResolver->resolve("data/ior/" + materialName + ".k.spd")));
+        }
+
+        Float extEta = lookupIOR(prop, "extEta", "air");
+
+        m_eta = prop.getSpectrum("eta", intEta) / extEta;
+        m_k   = prop.getSpectrum("k", intK) / extEta;
+
+        MicrofacetDistribution distribution(prop, MicrofacetDistribution::EBeckmann);
         m_type = distribution.getType();
         if(m_type != MicrofacetDistribution::EBeckmann)
             SLog(EError, "Glint's microfacet must be Beckmann microfacet distribution.");
@@ -25,13 +50,187 @@ public:
             m_alphaV = m_alphaU;
         else
             m_alphaV = new ConstantFloatTexture(distribution.getAlphaV());
+
+        new Rough
+        camera = new PerspectiveCameraImpl(prop);
+        camera->getID();
+        std::ostringstream oss;
+        oss << "Near P: " << camera_near_p << endl;
+        SLog(EError, oss.str().c_str());
     }
+
+    Glint(Stream *stream, InstanceManager *manager) : BSDF(stream, manager)
+    {
+        m_type = (MicrofacetDistribution::EType) stream->readUInt();
+        m_sampleVisible = stream->readBool();
+        m_alphaU = static_cast<Texture *>(manager->getInstance(stream));
+        m_alphaV = static_cast<Texture *>(manager->getInstance(stream));
+        m_specularReflectance = static_cast<Texture *>(manager->getInstance(stream));
+        m_eta = Spectrum(stream);
+        m_k = Spectrum(stream);
+
+        configure();
+    }
+
+    void serialize(Stream *stream, InstanceManager *manager) const
+    {
+        BSDF::serialize(stream, manager);
+
+        stream->writeUInt((uint32_t) m_type);
+        stream->writeBool(m_sampleVisible);
+        manager->serialize(stream, m_alphaU.get());
+        manager->serialize(stream, m_alphaV.get());
+        manager->serialize(stream, m_specularReflectance.get());
+        m_eta.serialize(stream);
+        m_k.serialize(stream);
+    }
+
+    void configure() {
+        unsigned int extraFlags = 0;
+        if (m_alphaU != m_alphaV)
+            extraFlags |= EAnisotropic;
+
+        if (!m_alphaU->isConstant() || !m_alphaV->isConstant() ||
+            !m_specularReflectance->isConstant())
+            extraFlags |= ESpatiallyVarying;
+
+        m_components.clear();
+        m_components.push_back(EGlossyReflection | EFrontSide | extraFlags);
+
+        /* Verify the input parameters and fix them if necessary */
+        m_specularReflectance = ensureEnergyConservation(
+                m_specularReflectance, "specularReflectance", 1.0f);
+
+        m_usesRayDifferentials =
+                m_alphaU->usesRayDifferentials() ||
+                m_alphaV->usesRayDifferentials() ||
+                m_specularReflectance->usesRayDifferentials();
+
+        BSDF::configure();
+    }
+
+    Spectrum eval(const BSDFSamplingRecord &bRec, EMeasure measure) const
+    {
+        return Spectrum(0.5f);
+    }
+
+    Float pdf(const BSDFSamplingRecord &bRec, EMeasure measure) const
+    {
+        return 1.0f;
+    }
+
+    Spectrum sample(BSDFSamplingRecord &bRec, const Point2 &sample) const
+    {
+        SLog(EInfo, "Sample Intersection: ", bRec.its.toString());
+        MicrofacetDistribution distr(
+                m_type,
+                m_alphaU->eval(bRec.its).average(),
+                m_alphaV->eval(bRec.its).average(),
+                m_sampleVisible
+        );
+        Float pdf;
+        Normal m = distr.sample(bRec.wi, sample, pdf);
+        bRec.wo = (2 * dot(bRec.wi, m) * Vector(m) - bRec.wi);
+        bRec.eta = 1.0f;
+        bRec.sampledComponent = 0;
+        bRec.sampledType = EGlossyReflection;
+        return Spectrum(0.5f);
+    }
+
+    Spectrum sample(BSDFSamplingRecord &bRec, Float &pdf, const Point2 &sample) const
+    {
+//        mitsuba::Thread *thread = mitsuba::Thread::getThread();
+//        std::ostringstream oss;
+//        const Intersection &its = bRec.its;
+//        Point origin = its.p + its.t * its.toWorld(its.wi);
+//
+//        int thread_id = thread->getID() - 3;
+//        if(is_set[thread_id]) {
+//            float length = (ray_origin[thread_id] - origin).length();
+//            if(length > 0.8) {
+//                not_match[thread_id]++;
+//                oss << length << "--Not match--" << not_match[thread_id] <<": " << endl
+//                    << ray_origin[thread_id].toString() << endl << origin.toString() << endl;
+//                ray_origin[thread_id] = origin;
+//                SLog(EInfo, oss.str().c_str());
+//            }
+//            else {
+//                match[thread_id]++;
+//                oss << length << "**Match**" << match[thread_id] << endl;
+//            }
+//        }
+//        else {
+//            is_set[thread_id] = true;
+//            not_match[thread_id] = 1;
+//            match[thread_id] = 0;
+//            ray_origin[thread_id] = origin;
+//            oss << "Intersection Origin: " << origin.toString() << endl;
+//            SLog(EInfo, oss.str().c_str());
+//        }
+
+
+        MicrofacetDistribution distr(
+                m_type,
+                m_alphaU->eval(bRec.its).average(),
+                m_alphaV->eval(bRec.its).average(),
+                m_sampleVisible
+        );
+        Normal m = distr.sample(bRec.wi, sample, pdf);
+        bRec.wo = (2 * dot(bRec.wi, m) * Vector(m) - bRec.wi);
+
+        bRec.eta = 1.0f;
+        bRec.sampledComponent = 0;
+        bRec.sampledType = EGlossyReflection;
+        return Spectrum(0.5f);
+    }
+
+    void addChild(const std::string &name, ConfigurableObject *child)
+    {
+        if (child->getClass()->derivesFrom(MTS_CLASS(Texture))) {
+            if (name == "alpha")
+                m_alphaU = m_alphaV = static_cast<Texture *>(child);
+            else if (name == "alphaU")
+                m_alphaU = static_cast<Texture *>(child);
+            else if (name == "alphaV")
+                m_alphaV = static_cast<Texture *>(child);
+            else if (name == "specularReflectance")
+                m_specularReflectance = static_cast<Texture *>(child);
+            else
+                BSDF::addChild(name, child);
+        } else {
+            BSDF::addChild(name, child);
+        }
+    }
+
+    Float getRoughness(const Intersection &its, int component) const
+    {
+        return 0.5f * (m_alphaU->eval(its).average()
+                       + m_alphaV->eval(its).average());
+    }
+
+    std::string toString() const
+    {
+        std::ostringstream oss;
+        oss << "Glint Microfacet[" << endl
+            << "id = \"" << getID() << "\"," << endl
+            << "distributon = \"EBeckmann\"]" << endl;
+        return oss.str();
+    }
+
+    Shader *createShader(Renderer *renderer) const;
     MTS_DECLARE_CLASS()
 private:
     MicrofacetDistribution::EType m_type;
     ref<Texture> m_specularReflectance;
     ref<Texture> m_alphaU, m_alphaV;
     bool m_sampleVisible;
+    Spectrum m_eta, m_k;
+
+    PerspectiveCameraImpl *camera;
+    float camera_near_p;
+    mutable Point ray_origin[4];
+    mutable bool is_set[4] = { false, false, false, false };
+    mutable int match[4], not_match[4];
 };
 
 
@@ -136,7 +335,12 @@ private:
     Spectrum m_R0;
 };
 
-MTS_IMPLEMENT_CLASS(GlintShader, false, Shader)
-MTS_IMPLEMENT_CLASS_S(Glint, false, BSDF)
+Shader *Glint::createShader(Renderer *renderer) const {
+    return new GlintShader(renderer,m_specularReflectance.get(), m_alphaU.get(),
+                           m_alphaV.get(), m_eta, m_k);
+}
+
+MTS_IMPLEMENT_CLASS(GlintShader, false, Shader);
+MTS_IMPLEMENT_CLASS_S(Glint, false, BSDF);
 MTS_EXPORT_PLUGIN(Glint, "Glint BRDF");
 MTS_NAMESPACE_END

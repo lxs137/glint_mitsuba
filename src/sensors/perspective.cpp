@@ -265,6 +265,14 @@ public:
 		ray.setOrigin(trafo.transformAffine(Point(0.0f)));
 		ray.setDirection(trafo(d));
 
+//		Point film_center = m_sampleToCamera(Point(
+//			0.5 * m_invResolution.x,
+//			0.5 * m_invResolution.y, 0.0f));
+//		Point camera_center = trafo.transformAffine(Point(0.0f));
+//		std::ostringstream oss;
+//		oss << "Length: " << (film_center - camera_center).length() << endl;
+//		SLog(EError, oss.str().c_str());
+
 		return Spectrum(1.0f);
 	}
 
@@ -293,6 +301,31 @@ public:
 		ray.rxDirection = trafo(normalize(Vector(nearP) + m_dx));
 		ray.ryDirection = trafo(normalize(Vector(nearP) + m_dy));
 		ray.hasDifferentials = true;
+
+		std::ostringstream oss;
+		Point nearP_world = trafo.transformAffine(nearP);
+		Point film_point = ray.o + ray.mint * ray.d;
+		if((nearP_world - film_point).length() < 0.01) {
+//			oss << "Match" << endl;
+			SLog(EInfo, "Match");
+		}
+		else {
+			SLog(EError, "Not match");
+		}
+
+
+//		Point film_center = m_sampleToCamera(Point(
+//				0.5f * m_invResolution.x,
+//				0.5f * m_invResolution.y, 0.0f));
+//		film_center = trafo.transformAffine(film_center);
+//		Point camera_center = trafo.transformAffine(Point(0.0f));
+//		oss << "film center: " << film_center.toString() << endl;
+//		oss << "camera center: " << camera_center.toString() << endl;
+//		oss << "Length: " << (film_center - camera_center).length() << endl;
+//		oss << "near clip: " << m_nearClip << endl;
+//		oss << "Ray point" << (ray.o + ray.mint * ray.d).toString() << endl;
+//		oss << ray.toString() << endl;
+//		SLog(EInfo, oss.str().c_str());
 
 		return Spectrum(1.0f);
 	}
