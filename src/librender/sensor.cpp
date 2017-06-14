@@ -161,6 +161,8 @@ ProjectiveCamera::ProjectiveCamera(const Properties &props) : Sensor(props) {
 	/* Distance to the focal plane */
 	m_focusDistance = props.getFloat("focusDistance", m_farClip);
 
+	Log(EInfo, toString().c_str());
+
 	if (m_nearClip <= 0)
 		Log(EError, "The 'nearClip' parameter must be greater than zero!");
 	if (m_nearClip >= m_farClip)

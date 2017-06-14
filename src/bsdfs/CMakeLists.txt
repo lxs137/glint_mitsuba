@@ -36,7 +36,7 @@ add_bsdf(null       null.cpp)
 add_bsdf(thindielectric thindielectric.cpp)
 
 # Glint materials
-add_bsdf(glint glint.cpp microfacet.h)
+add_bsdf(glint glint.cpp microfacet.h perspective_glint.h)
 
 
 if (BOOST_SPIRIT_WORKS)

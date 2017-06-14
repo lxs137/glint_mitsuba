@@ -7,10 +7,9 @@
 #include <mitsuba/hw/basicshader.h>
 #include "microfacet.h"
 #include "ior.h"
+#include "perspective_glint.h"
 
 MTS_NAMESPACE_BEGIN
-
-class PerspectiveCameraImpl;
 
 class Glint : public BSDF
 {
@@ -51,12 +50,14 @@ public:
         else
             m_alphaV = new ConstantFloatTexture(distribution.getAlphaV());
 
-        new Rough
-        camera = new PerspectiveCameraImpl(prop);
-        camera->getID();
+        camera = new PerspectiveCameraGlint(prop);
+        camera->configure();
+
+        ref<const AnimatedTransform> trans =  prop.getAnimatedTransform("toWorld", Transform());
         std::ostringstream oss;
-        oss << "Near P: " << camera_near_p << endl;
-        SLog(EError, oss.str().c_str());
+        oss << "to world: " << trans.toString() << "sample2camera: "
+            << endl << camera->m_sampleToCamera.toString() << endl;
+         SLog(EInfo, oss.str().c_str());
     }
 
     Glint(Stream *stream, InstanceManager *manager) : BSDF(stream, manager)
@@ -168,6 +169,13 @@ public:
 //            SLog(EInfo, oss.str().c_str());
 //        }
 
+        const Intersection &its = bRec.its;
+        Vector ray_d = its.toWorld(-its.wi);
+        Point origin = its.p - its.t * ray_d;
+        std::ostringstream oss;
+        oss << "Glint camera: " << camera->getNearClip() << endl;
+        SLog(EError, oss.str().c_str());
+
 
         MicrofacetDistribution distr(
                 m_type,
@@ -226,7 +234,7 @@ private:
     bool m_sampleVisible;
     Spectrum m_eta, m_k;
 
-    PerspectiveCameraImpl *camera;
+    PerspectiveCameraGlint *camera;
     float camera_near_p;
     mutable Point ray_origin[4];
     mutable bool is_set[4] = { false, false, false, false };

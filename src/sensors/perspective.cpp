@@ -303,15 +303,19 @@ public:
 		ray.hasDifferentials = true;
 
 		std::ostringstream oss;
-		Point nearP_world = trafo.transformAffine(nearP);
-		Point film_point = ray.o + ray.mint * ray.d;
-		if((nearP_world - film_point).length() < 0.01) {
+        oss << "True Camera--" << "to wrold: " << trafo.toString() << endl << "sample2camera: " << endl
+            << m_sampleToCamera.toString() << endl;
+        mitsuba::Thread::getThread();
+        SLog(EInfo, oss.str().c_str());
+//		Point nearP_world = trafo.transformAffine(nearP);
+//		Point film_point = ray.o + ray.mint * ray.d;
+//		if((nearP_world - film_point).length() < 0.01) {
 //			oss << "Match" << endl;
-			SLog(EInfo, "Match");
-		}
-		else {
-			SLog(EError, "Not match");
-		}
+//			SLog(EInfo, "Match");
+//		}
+//		else {
+//			SLog(EError, "Not match");
+//		}
 
 
 //		Point film_center = m_sampleToCamera(Point(
