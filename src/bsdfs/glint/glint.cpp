@@ -5,9 +5,11 @@
 #include <mitsuba/core/fresolver.h>
 #include <mitsuba/render/bsdf.h>
 #include <mitsuba/hw/basicshader.h>
-#include "microfacet.h"
-#include "ior.h"
+#include <mitsuba/core/plugin.h>
+#include "../microfacet.h"
+#include "../ior.h"
 #include "perspective_glint.h"
+#include "plane.h"
 
 MTS_NAMESPACE_BEGIN
 
@@ -50,14 +52,23 @@ public:
         else
             m_alphaV = new ConstantFloatTexture(distribution.getAlphaV());
 
+
+//        Properties new_prop = Properties(prop);
+//        new_prop.setPluginName("perspective");
+//        camera_temp = static_cast<PerspectiveCamera*>(PluginManager::getInstance()->
+//                createObject(MTS_CLASS(PerspectiveCamera), new_prop));
+//        std::ostringstream oss;
+//        oss << "Camera: " << camera_temp->toString() << endl;
+//        SLog(EError, oss.str().c_str());
+
         camera = new PerspectiveCameraGlint(prop);
         camera->configure();
 
-        ref<const AnimatedTransform> trans =  prop.getAnimatedTransform("toWorld", Transform());
-        std::ostringstream oss;
-        oss << "to world: " << trans.toString() << "sample2camera: "
-            << endl << camera->m_sampleToCamera.toString() << endl;
-         SLog(EInfo, oss.str().c_str());
+//        ref<const AnimatedTransform> trans =  prop.getAnimatedTransform("toWorld", Transform());
+//        std::ostringstream oss;
+//        oss << "to world: " << trans.toString() << "sample2camera: "
+//            << endl << camera->m_sampleToCamera.toString() << endl;
+//        SLog(EInfo, oss.str().c_str());
     }
 
     Glint(Stream *stream, InstanceManager *manager) : BSDF(stream, manager)
@@ -141,40 +152,46 @@ public:
     Spectrum sample(BSDFSamplingRecord &bRec, Float &pdf, const Point2 &sample) const
     {
 //        mitsuba::Thread *thread = mitsuba::Thread::getThread();
-//        std::ostringstream oss;
-//        const Intersection &its = bRec.its;
-//        Point origin = its.p + its.t * its.toWorld(its.wi);
-//
 //        int thread_id = thread->getID() - 3;
-//        if(is_set[thread_id]) {
-//            float length = (ray_origin[thread_id] - origin).length();
-//            if(length > 0.8) {
-//                not_match[thread_id]++;
-//                oss << length << "--Not match--" << not_match[thread_id] <<": " << endl
-//                    << ray_origin[thread_id].toString() << endl << origin.toString() << endl;
-//                ray_origin[thread_id] = origin;
-//                SLog(EInfo, oss.str().c_str());
-//            }
-//            else {
-//                match[thread_id]++;
-//                oss << length << "**Match**" << match[thread_id] << endl;
-//            }
-//        }
-//        else {
-//            is_set[thread_id] = true;
-//            not_match[thread_id] = 1;
-//            match[thread_id] = 0;
-//            ray_origin[thread_id] = origin;
-//            oss << "Intersection Origin: " << origin.toString() << endl;
-//            SLog(EInfo, oss.str().c_str());
-//        }
+        std::ostringstream oss;
+
 
         const Intersection &its = bRec.its;
-        Vector ray_d = its.toWorld(-its.wi);
-        Point origin = its.p - its.t * ray_d;
-        std::ostringstream oss;
-        oss << "Glint camera: " << camera->getNearClip() << endl;
-        SLog(EError, oss.str().c_str());
+        const TriMesh *mesh = static_cast<const TriMesh*>(its.shape);
+        Triangle tri = mesh->getTriangles()[its.primIndex];
+
+        Vector ray_d = its.toWorld(-its.wi), d_diff[4];
+        Point ray_o = its.p - its.t * ray_d, p_film = ray_o + camera->getNearClip() * ray_d,
+                sample_diff[4], intersect_diff[4];
+        Point2 tex_diff[4];
+        Ray *ray_diff[4];
+        camera->get_sample_differential(p_film, sample_diff);
+        bool all_intersect = true;
+        TexPlane plane = TexPlane(its.p, Normal(its.toWorld(Vector(0, 0, 1.f))));
+        // Sample texture coord for intersect diff
+        plane.add_tri(mesh->getVertexPositions(), mesh->getVertexTexcoords(), tri.idx);
+        for(int i = 0; i < 4; i++)
+        {
+            float t;
+            d_diff[i] = (sample_diff[i] - ray_o) / camera->getNearClip();
+            ray_diff[i] = new Ray(ray_o, d_diff[i], 0.f);
+            if(plane.intersect(*ray_diff[i], t))
+                intersect_diff[i] = (*ray_diff[i])(t);
+            else {
+                SLog(EWarn, "Shape is parallel with ray");
+                return Spectrum(0.5f);
+            }
+            plane.sample_tex_coord(intersect_diff[i], tex_diff[i]);
+        }
+        AABB2 tex_box = AABB2(tex_diff[0]);
+        tex_box.expandBy(tex_diff[1]);
+        tex_box.expandBy(tex_diff[2]);
+        tex_box.expandBy(tex_diff[3]);
+
+        oss << "Hit: " << its.uv.toString() << endl
+            << "Box: " << endl
+            << tex_box.toString() << endl;
+        SLog(EInfo, oss.str().c_str());
 
 
         MicrofacetDistribution distr(
@@ -189,6 +206,11 @@ public:
         bRec.eta = 1.0f;
         bRec.sampledComponent = 0;
         bRec.sampledType = EGlossyReflection;
+
+        // Clear variable
+        for(int i = 0; i < 4; i++)
+            delete ray_diff[i];
+
         return Spectrum(0.5f);
     }
 
@@ -216,6 +238,11 @@ public:
                        + m_alphaV->eval(its).average());
     }
 
+    ~Glint()
+    {
+        delete camera;
+    }
+
     std::string toString() const
     {
         std::ostringstream oss;
@@ -235,10 +262,8 @@ private:
     Spectrum m_eta, m_k;
 
     PerspectiveCameraGlint *camera;
-    float camera_near_p;
-    mutable Point ray_origin[4];
-    mutable bool is_set[4] = { false, false, false, false };
-    mutable int match[4], not_match[4];
+
+    PerspectiveCamera *camera_temp;
 };
 
 

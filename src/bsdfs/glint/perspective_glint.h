@@ -86,6 +86,10 @@ public:
                 Vector((1-2*relOffset.x)/relSize.x - 1,
                        -(1-2*relOffset.y)/relSize.y + 1, 0.0f)) *
                           Transform::scale(Vector(1.0f / relSize.x, 1.0f / relSize.y, 1.0f));
+
+        m_sampleToWorld = getWorldTransform()->eval(0.f) *
+                          m_sampleToCamera;
+        m_worldToSample = m_sampleToWorld.inverse();
     }
 
     /**
@@ -174,14 +178,6 @@ public:
         ray.setOrigin(trafo.transformAffine(Point(0.0f)));
         ray.setDirection(trafo(d));
 
-//		Point film_center = m_sampleToCamera(Point(
-//			0.5 * m_invResolution.x,
-//			0.5 * m_invResolution.y, 0.0f));
-//		Point camera_center = trafo.transformAffine(Point(0.0f));
-//		std::ostringstream oss;
-//		oss << "Length: " << (film_center - camera_center).length() << endl;
-//		SLog(EError, oss.str().c_str());
-
         return Spectrum(1.0f);
     }
 
@@ -210,31 +206,6 @@ public:
         ray.rxDirection = trafo(normalize(Vector(nearP) + m_dx));
         ray.ryDirection = trafo(normalize(Vector(nearP) + m_dy));
         ray.hasDifferentials = true;
-
-        std::ostringstream oss;
-        Point nearP_world = trafo.transformAffine(nearP);
-        Point film_point = ray.o + ray.mint * ray.d;
-        if((nearP_world - film_point).length() < 0.01) {
-//			oss << "Match" << endl;
-            SLog(EInfo, "Match");
-        }
-        else {
-            SLog(EError, "Not match");
-        }
-
-
-//		Point film_center = m_sampleToCamera(Point(
-//				0.5f * m_invResolution.x,
-//				0.5f * m_invResolution.y, 0.0f));
-//		film_center = trafo.transformAffine(film_center);
-//		Point camera_center = trafo.transformAffine(Point(0.0f));
-//		oss << "film center: " << film_center.toString() << endl;
-//		oss << "camera center: " << camera_center.toString() << endl;
-//		oss << "Length: " << (film_center - camera_center).length() << endl;
-//		oss << "near clip: " << m_nearClip << endl;
-//		oss << "Ray point" << (ray.o + ray.mint * ray.d).toString() << endl;
-//		oss << ray.toString() << endl;
-//		SLog(EInfo, oss.str().c_str());
 
         return Spectrum(1.0f);
     }
@@ -400,6 +371,18 @@ public:
         return oss.str();
     }
 
+    void get_sample_differential(const Point &sample, Point *differential) const
+    {
+        Point p_film_sample = m_worldToSample(sample);
+        int x = (int)(p_film_sample.x * m_resolution.x), y = (int)(p_film_sample.y * m_resolution.y);
+        differential[0] = m_sampleToWorld(Point(x * m_invResolution.x, y * m_invResolution.y, 0.f));
+        differential[1] = m_sampleToWorld(Point((x + 1) * m_invResolution.x, y * m_invResolution.y, 0.f));
+        differential[2] = m_sampleToWorld(Point((x + 1) * m_invResolution.x, (y + 1) * m_invResolution.y, 0.f));
+        differential[3] = m_sampleToWorld(Point(x * m_invResolution.x, (y + 1) * m_invResolution.y, 0.f));
+    }
+
+    Transform m_worldToSample;
+    Transform m_sampleToWorld;
     Transform m_cameraToSample;
     Transform m_sampleToCamera;
     Transform m_clipTransform;

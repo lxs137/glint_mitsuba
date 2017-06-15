@@ -302,11 +302,11 @@ public:
 		ray.ryDirection = trafo(normalize(Vector(nearP) + m_dy));
 		ray.hasDifferentials = true;
 
-		std::ostringstream oss;
-        oss << "True Camera--" << "to wrold: " << trafo.toString() << endl << "sample2camera: " << endl
-            << m_sampleToCamera.toString() << endl;
-        mitsuba::Thread::getThread();
-        SLog(EInfo, oss.str().c_str());
+//		std::ostringstream oss;
+//        oss << "True Camera--" << "to wrold: " << trafo.toString() << endl << "sample2camera: " << endl
+//            << m_sampleToCamera.toString() << endl;
+//        mitsuba::Thread::getThread();
+//        SLog(EInfo, oss.str().c_str());
 //		Point nearP_world = trafo.transformAffine(nearP);
 //		Point film_point = ray.o + ray.mint * ray.d;
 //		if((nearP_world - film_point).length() < 0.01) {

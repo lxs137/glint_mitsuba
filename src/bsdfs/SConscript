@@ -29,7 +29,7 @@ plugins += env.SharedLibrary('null', ['null.cpp'])
 plugins += env.SharedLibrary('thindielectric', ['thindielectric.cpp'])
 
 # Glint materials
-plugins += env.SharedLibrary('glint', ['glint.cpp'])
+plugins += env.SharedLibrary('glint', ['glint/glint.cpp'])
 
 # The Irawan-Marschner plugin uses a Boost::Spirit parser, which makes it
 # pretty heavy stuff to compile. Go easy on the compiler flags:
