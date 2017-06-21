@@ -11,7 +11,16 @@
 #include "perspective_glint.h"
 #include "plane.h"
 
+#define SET_P_SIZE 10000
+#define SPATIAL_SAMPLE_NUM 1000000
+#define PI_2 1.570795f
+#define _2_PI 6.28318f
+
+
+
 MTS_NAMESPACE_BEGIN
+
+typedef std::pair<AABB2, uint32_t > SpatialNode;
 
 class Glint : public BSDF
 {
@@ -52,14 +61,16 @@ public:
         else
             m_alphaV = new ConstantFloatTexture(distribution.getAlphaV());
 
-
-//        Properties new_prop = Properties(prop);
-//        new_prop.setPluginName("perspective");
-//        camera_temp = static_cast<PerspectiveCamera*>(PluginManager::getInstance()->
-//                createObject(MTS_CLASS(PerspectiveCamera), new_prop));
-//        std::ostringstream oss;
-//        oss << "Camera: " << camera_temp->toString() << endl;
-//        SLog(EError, oss.str().c_str());
+        ref<Random> random = new Random();
+        Float x, y, z;
+        for(uint32_t i = 0; i < SET_P_SIZE; i++)
+        {
+            x = random->nextFloat();
+            y = (1 - x) * random->nextFloat();
+            z = (1 - x - y) * random->nextFloat();
+            set_p.push_back(Point4(x, y, z, 1 - x - y - z));
+        }
+        SLog(EInfo, "Generate set points");
 
         camera = new PerspectiveCameraGlint(prop);
         camera->configure();
@@ -152,7 +163,6 @@ public:
     Spectrum sample(BSDFSamplingRecord &bRec, Float &pdf, const Point2 &sample) const
     {
 //        mitsuba::Thread *thread = mitsuba::Thread::getThread();
-//        int thread_id = thread->getID() - 3;
         std::ostringstream oss;
 
 
@@ -166,7 +176,6 @@ public:
         Point2 tex_diff[4];
         Ray *ray_diff[4];
         camera->get_sample_differential(p_film, sample_diff);
-        bool all_intersect = true;
         TexPlane plane = TexPlane(its.p, Normal(its.toWorld(Vector(0, 0, 1.f))));
         // Sample texture coord for intersect diff
         plane.add_tri(mesh->getVertexPositions(), mesh->getVertexTexcoords(), tri.idx);
@@ -178,7 +187,7 @@ public:
             if(plane.intersect(*ray_diff[i], t))
                 intersect_diff[i] = (*ray_diff[i])(t);
             else {
-                SLog(EWarn, "Shape is parallel with ray");
+                SLog(EWarn, "Triangle is parallel with ray.");
                 return Spectrum(0.5f);
             }
             plane.sample_tex_coord(intersect_diff[i], tex_diff[i]);
@@ -188,10 +197,10 @@ public:
         tex_box.expandBy(tex_diff[2]);
         tex_box.expandBy(tex_diff[3]);
 
-        oss << "Hit: " << its.uv.toString() << endl
-            << "Box: " << endl
-            << tex_box.toString() << endl;
-        SLog(EInfo, oss.str().c_str());
+//        oss << "Hit: " << its.uv.toString() << endl
+//            << "Box: " << endl
+//            << tex_box.getSurfaceArea() << endl;
+//        SLog(EInfo, oss.str().c_str());
 
 
         MicrofacetDistribution distr(
@@ -211,7 +220,7 @@ public:
         for(int i = 0; i < 4; i++)
             delete ray_diff[i];
 
-        return Spectrum(0.5f);
+        return Spectrum(0.2f * (tex_box.getSurfaceArea() / 0.005f));
     }
 
     void addChild(const std::string &name, ConfigurableObject *child)
@@ -252,6 +261,27 @@ public:
         return oss.str();
     }
 
+    Float count_spatial(AABB2 box)
+    {
+        uint32_t count = 0;
+        std::vector<std::pair<AABB2, uint32_t >> queue;
+        queue.push_back(std::pair(AABB2(Point2(0.f, 0.f), Point2(1.f, 1.f)), SPATIAL_SAMPLE_NUM));
+        std::pair<AABB2, uint32_t> node;
+        while(!queue.empty())
+        {
+            node = queue.back();
+            if(!node.first.overlaps(box) || node.second <= 0) {
+                queue.pop_back();
+                continue;
+            }
+        }
+    }
+
+    Float count_direction(Vector wi, Vector wo, Normal m)
+    {
+        return 1.f;
+    }
+
     Shader *createShader(Renderer *renderer) const;
     MTS_DECLARE_CLASS()
 private:
@@ -262,8 +292,7 @@ private:
     Spectrum m_eta, m_k;
 
     PerspectiveCameraGlint *camera;
-
-    PerspectiveCamera *camera_temp;
+    std::vector<Point4> set_p;
 };
 
 
