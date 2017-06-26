@@ -12,7 +12,8 @@
 #include "plane.h"
 
 #define SET_P_SIZE 10000
-#define SPATIAL_SAMPLE_NUM 1000000
+#define SPATIAL_SAMPLE_NUM 100000000
+#define EPSILON_COUNT 0.1f
 #define PI_2 1.570795f
 #define _2_PI 6.28318f
 
@@ -61,14 +62,22 @@ public:
         else
             m_alphaV = new ConstantFloatTexture(distribution.getAlphaV());
 
-        ref<Random> random = new Random();
-        Float x, y, z;
-        for(uint32_t i = 0; i < SET_P_SIZE; i++)
+        ref<Random> random = new Random((uint64_t)time(NULL));
+        Float x, y, z, w, u, variance;
+        std::ostringstream oss;
+        for(int i = 0; i < SET_P_SIZE;)
         {
             x = random->nextFloat();
             y = (1 - x) * random->nextFloat();
             z = (1 - x - y) * random->nextFloat();
-            set_p.push_back(Point4(x, y, z, 1 - x - y - z));
+            w = 1 - x - y - z;
+            u = (x + y + z + w) / 4;
+            variance = ((x - u)*(x - u) + (y - u)*(y - u) + (z - u)*(z - u) + (w - u)*(w - u)) / 4;
+            Float max = 1.f - 0.96f * powf(2.7f, -i);
+            if(variance < max) {
+                set_p.push_back(Point4(x, y, z, w));
+                i++;
+            }
         }
         SLog(EInfo, "Generate set points");
 
@@ -165,7 +174,6 @@ public:
 //        mitsuba::Thread *thread = mitsuba::Thread::getThread();
         std::ostringstream oss;
 
-
         const Intersection &its = bRec.its;
         const TriMesh *mesh = static_cast<const TriMesh*>(its.shape);
         Triangle tri = mesh->getTriangles()[its.primIndex];
@@ -196,6 +204,13 @@ public:
         tex_box.expandBy(tex_diff[1]);
         tex_box.expandBy(tex_diff[2]);
         tex_box.expandBy(tex_diff[3]);
+
+        Float p = count_spatial(tex_box);
+//        if(p > 1e-4) {
+//            oss << "Query: " << tex_box.toString() << endl;
+//            oss << "p: " << p << endl;
+//            SLog(EInfo, oss.str().c_str());
+//        }
 
 //        oss << "Hit: " << its.uv.toString() << endl
 //            << "Box: " << endl
@@ -261,20 +276,52 @@ public:
         return oss.str();
     }
 
-    Float count_spatial(AABB2 box)
+    Float count_spatial(const AABB2 &query) const
     {
-        uint32_t count = 0;
-        std::vector<std::pair<AABB2, uint32_t >> queue;
-        queue.push_back(std::pair(AABB2(Point2(0.f, 0.f), Point2(1.f, 1.f)), SPATIAL_SAMPLE_NUM));
-        std::pair<AABB2, uint32_t> node;
+        uint32_t count = 0, split_times = 0;
+        std::vector<SpatialNode> queue;
+        queue.push_back(std::make_pair(AABB2(Point2(0.f, 0.f), Point2(1.f, 1.f)), SPATIAL_SAMPLE_NUM));
+        SpatialNode node;
+        AABB2 clip_box;
+        Float p;
         while(!queue.empty())
         {
             node = queue.back();
-            if(!node.first.overlaps(box) || node.second <= 0) {
-                queue.pop_back();
-                continue;
+            queue.pop_back();
+            if(!node.first.overlaps(query) || node.second <= 0) {
+                // Pass
+            }
+            else if(query.contains(node.first)) {
+                count += node.second;
+            }
+            else {
+                p = count / SPATIAL_SAMPLE_NUM;
+                if(sqrt(node.second * p * (1 - p)) < EPSILON_COUNT * count) {
+                    clip_box = node.first;
+                    clip_box.clip(query);
+                    count += (uint32_t)(node.second * clip_box.getSurfaceArea() / node.first.getSurfaceArea());
+                }
+                else {
+                    assert(split_times < SET_P_SIZE);
+                    Point2 center = node.first.getCenter(), min = node.first.min, max = node.first.max;
+                    queue.push_back(std::make_pair(
+                            AABB2(min, center),
+                            (uint32_t)(node.second * set_p[split_times].x)));
+                    queue.push_back(std::make_pair(
+                            AABB2(Point2(center.x, min.y), Point2(max.x, center.y)),
+                            (uint32_t)(node.second * set_p[split_times].y)));
+                    queue.push_back(std::make_pair(
+                            AABB2(center, max),
+                            (uint32_t)(node.second * set_p[split_times].z)));
+                    queue.push_back(std::make_pair(
+                            AABB2(Point2(min.x, center.y), Point2(center.x, max.y)),
+                            (uint32_t)(node.second * set_p[split_times].w)));
+                    split_times++;
+                }
             }
         }
+
+        return (Float)count / SPATIAL_SAMPLE_NUM;
     }
 
     Float count_direction(Vector wi, Vector wo, Normal m)
