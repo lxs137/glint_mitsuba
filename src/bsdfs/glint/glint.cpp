@@ -13,15 +13,87 @@
 
 #define SET_P_SIZE 10000
 #define SPATIAL_SAMPLE_NUM 100000000
+#define DIRECTION_SAMPLE_NUM 100000000
 #define EPSILON_COUNT 0.1f
+#define GAMMA_DIRECTION 0.523598f
+#define PI 3.141593f
 #define PI_2 1.570795f
 #define _2_PI 6.28318f
-
+#define Spherical2Cartesian(dir) Point3(cosf(dir.x)*sinf(dir.y),sinf(dir.x)*sinf(dir.y),cosf(dir.y))
 
 
 MTS_NAMESPACE_BEGIN
 
-typedef std::pair<AABB2, uint32_t > SpatialNode;
+struct DirectionTri
+{
+    Point2 vertices[3];
+    DirectionTri(const Point2 &p1, const Point2 &p2, const Point2 &p3) {
+        vertices[0] = p1, vertices[1] = p2, vertices[2] = p3;
+    }
+
+};
+
+typedef std::pair<AABB2, uint32_t> SpatialNode;
+typedef std::pair<DirectionTri, uint32_t> DirectionNode;
+struct ConicQuery{
+    Normal m;
+    Vector wi, wo;
+    Float Gamma;
+    Matrix3x3 C;
+
+    ConicQuery(const Vector &_wi, const Normal &_m, Float _Gamma): wi(_wi), m(_m), Gamma(_Gamma)
+    {
+        wo = (2 * dot(wi, _m) * Vector(_m) - wi);
+        Vector x = normalize(cross(wi, wo)), y = normalize(wi - wo), z = normalize(wi + wo);
+        Float lambda1 = (dot(wi, wo) + cosf(Gamma)) / (1 - cosf(Gamma)), lambda2 = 1.f / (tanf(Gamma/2)*tanf(Gamma/2));
+        Matrix3x3 Q(x, y, z), A(lambda1, 0.f, 0.f, 0.f, lambda2, 0.f, 0.f, 0.f, -1.f), Q_transpose;
+        Q.transpose(Q_transpose);
+        C = Q;
+        C *= A;
+        C *= Q_transpose;
+    }
+
+    bool is_in(const Point2 &direction) const
+    {
+        Vector _m = Vector(Spherical2Cartesian(direction)), temp = C.preMult(_m);
+        return dot(temp, _m) <= 0.f;
+    }
+
+    bool is_intersect(Point2 *_tri) const
+    {
+        Point3 tri[3] = {Spherical2Cartesian(_tri[0]), Spherical2Cartesian(_tri[1]), Spherical2Cartesian(_tri[2])};
+        Vector c, d;
+        Float param_a, param_b, param_c, axis;
+        for(int i = 0; i < 3; i++)
+        {
+            c = tri[i] + tri[(i + 1) % 3] - Point3(0.f, 0.f, 0.f);
+            d = tri[i] - tri[(i + 1) % 3];
+            param_a = dot(C.preMult(d), d);
+            param_b = 2 * dot(C.preMult(d), c);
+            param_c = dot(C.preMult(c), c);
+            if((param_a - param_b + param_c) * (param_a + param_b + param_c) < 0.f)
+                return true;
+            else
+            {
+                axis = - param_b / (2 * param_a);
+                if(axis < -1.f || axis > 2.f || param_a * param_c - param_b * param_b * 0.25f >= 0.f)
+                    continue;
+                else
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    Float overlap_area(Point2 *_tri) const
+    {
+        Point3 tri[3] = {Spherical2Cartesian(_tri[0]), Spherical2Cartesian(_tri[1]), Spherical2Cartesian(_tri[2])};
+
+    }
+
+
+
+};
 
 class Glint : public BSDF
 {
@@ -284,6 +356,7 @@ public:
         SpatialNode node;
         AABB2 clip_box;
         Float p;
+
         while(!queue.empty())
         {
             node = queue.back();
@@ -324,8 +397,19 @@ public:
         return (Float)count / SPATIAL_SAMPLE_NUM;
     }
 
-    Float count_direction(Vector wi, Vector wo, Normal m)
+    Float count_direction(const Vector wi, const Vector wo, const Normal m) const
     {
+        uint32_t count = 0, split_times = 0;
+        std::vector<DirectionNode> queue;
+        queue.push_back(std::make_pair(DirectionTri(Point2(0.f, 0.f), Point2(PI_2, 0.f), Point2(0.f, PI_2)),
+                                       (uint32_t)(DIRECTION_SAMPLE_NUM * set_p[0].x)));
+        queue.push_back(std::make_pair(DirectionTri(Point2(PI_2, 0.f), Point2(PI, 0.f), Point2(0.f, PI_2)),
+                                       (uint32_t)(DIRECTION_SAMPLE_NUM * set_p[0].y)));
+        queue.push_back(std::make_pair(DirectionTri(Point2(PI, 0.f), Point2(PI_2 + PI, 0.f), Point2(0.f, PI_2)),
+                                       (uint32_t)(DIRECTION_SAMPLE_NUM * set_p[0].z)));
+        queue.push_back(std::make_pair(DirectionTri(Point2(PI + PI_2, 0.f), Point2(_2_PI, 0.f), Point2(0.f, PI_2)),
+                                       (uint32_t)(DIRECTION_SAMPLE_NUM * set_p[0].w)));
+        split_times++;
         return 1.f;
     }
 
