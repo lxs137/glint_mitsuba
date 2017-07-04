@@ -11,6 +11,8 @@
 #include <mitsuba/core/track.h>
 #include <mitsuba/core/frame.h>
 
+#define CAMERA_PIXEL_WIDTH 1
+
 MTS_NAMESPACE_BEGIN
 
 class PerspectiveCameraGlint : public PerspectiveCamera {
@@ -376,9 +378,9 @@ public:
         Point p_film_sample = m_worldToSample(sample);
         int x = (int)(p_film_sample.x * m_resolution.x), y = (int)(p_film_sample.y * m_resolution.y);
         differential[0] = m_sampleToWorld(Point(x * m_invResolution.x, y * m_invResolution.y, 0.f));
-        differential[1] = m_sampleToWorld(Point((x + 1) * m_invResolution.x, y * m_invResolution.y, 0.f));
-        differential[2] = m_sampleToWorld(Point((x + 1) * m_invResolution.x, (y + 1) * m_invResolution.y, 0.f));
-        differential[3] = m_sampleToWorld(Point(x * m_invResolution.x, (y + 1) * m_invResolution.y, 0.f));
+        differential[1] = m_sampleToWorld(Point((x + CAMERA_PIXEL_WIDTH) * m_invResolution.x, y * m_invResolution.y, 0.f));
+        differential[2] = m_sampleToWorld(Point((x + CAMERA_PIXEL_WIDTH) * m_invResolution.x, (y + CAMERA_PIXEL_WIDTH) * m_invResolution.y, 0.f));
+        differential[3] = m_sampleToWorld(Point(x * m_invResolution.x, (y + CAMERA_PIXEL_WIDTH) * m_invResolution.y, 0.f));
     }
 
     Transform m_worldToSample;

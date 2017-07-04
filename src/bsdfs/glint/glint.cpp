@@ -15,7 +15,7 @@
 #define SPATIAL_SAMPLE_NUM 100000000
 #define DIRECTION_SAMPLE_NUM 100000000
 #define EPSILON_COUNT 0.1f
-#define GAMMA_DIRECTION 0.087266f
+#define GAMMA_DIRECTION 0.087f
 #define PI 3.141593f
 #define PI_2 1.570795f
 #define _2_PI 6.28318f
@@ -55,14 +55,12 @@ struct DirectionTri
 typedef std::pair<AABB2, uint32_t> SpatialNode;
 typedef std::pair<DirectionTri, uint32_t> DirectionNode;
 struct ConicQuery{
-    Normal m;
     Vector wi, wo;
     Float Gamma;
     Matrix3x3 C;
 
-    ConicQuery(const Vector &_wi, const Normal &_m, Float _Gamma): wi(_wi), m(_m), Gamma(_Gamma)
+    ConicQuery(const Vector &_wi, const Vector &_wo, Float _Gamma): wi(_wi), wo(_wo), Gamma(_Gamma)
     {
-        wo = (2 * dot(wi, _m) * Vector(_m) - wi);
         Vector x = normalize(cross(wi, wo)), y = normalize(wi - wo), z = normalize(wi + wo);
         Float lambda1 = (dot(wi, wo) + cosf(Gamma)) / (1 - cosf(Gamma)), lambda2 = 1.f / (tanf(Gamma/2)*tanf(Gamma/2));
         Matrix3x3 Q(x, y, z), A(lambda1, 0.f, 0.f, 0.f, lambda2, 0.f, 0.f, 0.f, -1.f), Q_transpose;
@@ -170,7 +168,7 @@ public:
             w = 1 - x - y - z;
             u = (x + y + z + w) / 4;
             variance = ((x - u)*(x - u) + (y - u)*(y - u) + (z - u)*(z - u) + (w - u)*(w - u)) / 4;
-            Float max = 1.f - 0.96f * powf(2.7f, -i);
+            Float max = 1.f - 0.96f * powf(1.1f, -i);
             if(variance < max) {
                 set_p.push_back(Point4(x, y, z, w));
                 i++;
@@ -240,7 +238,80 @@ public:
 
     Spectrum eval(const BSDFSamplingRecord &bRec, EMeasure measure) const
     {
-        return Spectrum(0.5f);
+        /* Stop if this component was not requested */
+        if (measure != ESolidAngle ||
+            Frame::cosTheta(bRec.wi) <= 0 ||
+            Frame::cosTheta(bRec.wo) <= 0 ||
+            ((bRec.component != -1 && bRec.component != 0) ||
+             !(bRec.typeMask & EGlossyReflection)))
+            return Spectrum(0.0f);
+
+
+        std::ostringstream oss;
+        const Intersection &its = bRec.its;
+        const TriMesh *mesh = static_cast<const TriMesh*>(its.shape);
+        Triangle tri = mesh->getTriangles()[its.primIndex];
+
+        Vector ray_d = its.toWorld(-its.wi), d_diff[4];
+        Point ray_o = its.p - its.t * ray_d, p_film = ray_o + camera->getNearClip() * ray_d,
+                sample_diff[4], intersect_diff[4];
+        Point2 tex_diff[4];
+        Ray ray_diff[4];
+        camera->get_sample_differential(p_film, sample_diff);
+        TexPlane plane = TexPlane(its.p, Normal(its.toWorld(Vector(0, 0, 1.f))));
+        // Sample texture coord for intersect diff
+        plane.add_tri(mesh->getVertexPositions(), mesh->getVertexTexcoords(), tri.idx);
+        for(int i = 0; i < 4; i++)
+        {
+            float t;
+            d_diff[i] = (sample_diff[i] - ray_o) / camera->getNearClip();
+            ray_diff[i] = Ray(ray_o, d_diff[i], 0.f);
+            if(plane.intersect(ray_diff[i], t))
+                intersect_diff[i] = (ray_diff[i])(t);
+            else {
+                SLog(EWarn, "Triangle is parallel with ray.");
+                return Spectrum(0.5f);
+            }
+            plane.sample_tex_coord(intersect_diff[i], tex_diff[i]);
+        }
+        AABB2 tex_box = AABB2(tex_diff[0]);
+        tex_box.expandBy(tex_diff[1]);
+        tex_box.expandBy(tex_diff[2]);
+        tex_box.expandBy(tex_diff[3]);
+
+        /* Calculate the reflection half-vector */
+        Vector H = normalize(bRec.wo+bRec.wi);
+
+        /* Construct the microfacet distribution matching the
+           roughness values at the current surface position. */
+        MicrofacetDistribution distr(
+                m_type,
+                m_alphaU->eval(bRec.its).average(),
+                m_alphaV->eval(bRec.its).average(),
+                m_sampleVisible
+        );
+//        Float D = count_spatial(tex_box);
+//        D *= count_direction(bRec.wi, bRec.wo);
+        Float D = count_direction(bRec.wi, bRec.wo);
+        oss << D <<std::endl;
+        SLog(EInfo, oss.str().c_str());
+
+        /* Evaluate the microfacet normal distribution */
+        if (D == 0)
+            return Spectrum(0.0f);
+
+        /* Fresnel factor */
+        const Spectrum F = fresnelConductorExact(dot(bRec.wi, H), m_eta, m_k) *
+                           m_specularReflectance->eval(bRec.its);
+
+        /* Smith's shadow-masking function */
+        const Float G = distr.G(bRec.wi, bRec.wo, H);
+
+        /* Calculate the total amount of reflection */
+        Float model = dot(bRec.wi, H) * D * G /
+                (tex_box.getSurfaceArea() * PI * (1 - cosf(GAMMA_DIRECTION)) * Frame::cosTheta(bRec.wi));
+
+        return F * model;
     }
 
     Float pdf(const BSDFSamplingRecord &bRec, EMeasure measure) const
@@ -268,66 +339,57 @@ public:
 
     Spectrum sample(BSDFSamplingRecord &bRec, Float &pdf, const Point2 &sample) const
     {
-//        mitsuba::Thread *thread = mitsuba::Thread::getThread();
-        std::ostringstream oss;
-
-        const Intersection &its = bRec.its;
-        const TriMesh *mesh = static_cast<const TriMesh*>(its.shape);
-        Triangle tri = mesh->getTriangles()[its.primIndex];
-
-        Vector ray_d = its.toWorld(-its.wi), d_diff[4];
-        Point ray_o = its.p - its.t * ray_d, p_film = ray_o + camera->getNearClip() * ray_d,
-                sample_diff[4], intersect_diff[4];
-        Point2 tex_diff[4];
-        Ray *ray_diff[4];
-        camera->get_sample_differential(p_film, sample_diff);
-        TexPlane plane = TexPlane(its.p, Normal(its.toWorld(Vector(0, 0, 1.f))));
-        // Sample texture coord for intersect diff
-        plane.add_tri(mesh->getVertexPositions(), mesh->getVertexTexcoords(), tri.idx);
-        for(int i = 0; i < 4; i++)
-        {
-            float t;
-            d_diff[i] = (sample_diff[i] - ray_o) / camera->getNearClip();
-            ray_diff[i] = new Ray(ray_o, d_diff[i], 0.f);
-            if(plane.intersect(*ray_diff[i], t))
-                intersect_diff[i] = (*ray_diff[i])(t);
-            else {
-                SLog(EWarn, "Triangle is parallel with ray.");
-                return Spectrum(0.5f);
-            }
-            plane.sample_tex_coord(intersect_diff[i], tex_diff[i]);
-        }
-        AABB2 tex_box = AABB2(tex_diff[0]);
-        tex_box.expandBy(tex_diff[1]);
-        tex_box.expandBy(tex_diff[2]);
-        tex_box.expandBy(tex_diff[3]);
+//        std::ostringstream oss;
+//
+//        const Intersection &its = bRec.its;
+//        const TriMesh *mesh = static_cast<const TriMesh*>(its.shape);
+//        Triangle tri = mesh->getTriangles()[its.primIndex];
+//
+//        Vector ray_d = its.toWorld(-its.wi), d_diff[4];
+//        Point ray_o = its.p - its.t * ray_d, p_film = ray_o + camera->getNearClip() * ray_d,
+//                sample_diff[4], intersect_diff[4];
+//        Point2 tex_diff[4];
+//        Ray ray_diff[4];
+//        camera->get_sample_differential(p_film, sample_diff);
+//        TexPlane plane = TexPlane(its.p, Normal(its.toWorld(Vector(0, 0, 1.f))));
+//        // Sample texture coord for intersect diff
+//        plane.add_tri(mesh->getVertexPositions(), mesh->getVertexTexcoords(), tri.idx);
+//        for(int i = 0; i < 4; i++)
+//        {
+//            float t;
+//            d_diff[i] = (sample_diff[i] - ray_o) / camera->getNearClip();
+//            ray_diff[i] = Ray(ray_o, d_diff[i], 0.f);
+//            if(plane.intersect(ray_diff[i], t))
+//                intersect_diff[i] = (ray_diff[i])(t);
+//            else {
+//                SLog(EWarn, "Triangle is parallel with ray.");
+//                return Spectrum(0.5f);
+//            }
+//            plane.sample_tex_coord(intersect_diff[i], tex_diff[i]);
+//        }
+//        AABB2 tex_box = AABB2(tex_diff[0]);
+//        tex_box.expandBy(tex_diff[1]);
+//        tex_box.expandBy(tex_diff[2]);
+//        tex_box.expandBy(tex_diff[3]);
 
         MicrofacetDistribution distr(
                 m_type,
-                m_alphaU->eval(its).average(),
-                m_alphaV->eval(its).average(),
+                m_alphaU->eval(bRec.its).average(),
+                m_alphaV->eval(bRec.its).average(),
                 m_sampleVisible
         );
         Normal m = distr.sample(bRec.wi, sample, pdf);
 
-//        Float p = count_spatial(tex_box);
-        Float p = count_direction(its.wi, m);
-        if(p > 1e-4) {
-            oss << "Query: " << m.toString() << endl;
-            oss << "p: " << p << endl;
-            SLog(EInfo, oss.str().c_str());
-        }
-
-
+        bRec.wo = 2 * dot(bRec.wi, m) * Vector(m) - bRec.wi;
         bRec.eta = 1.0f;
         bRec.sampledComponent = 0;
         bRec.sampledType = EGlossyReflection;
 
-        // Clear variable
-        for(int i = 0; i < 4; i++)
-            delete ray_diff[i];
+//        Float D = count_spatial(tex_box);
+//        D *= count_direction(bRec.wi, bRec.wo);
 
-        return Spectrum(0.2f * (tex_box.getSurfaceArea() / 0.005f));
+//        return Spectrum(0.2f * (tex_box.getSurfaceArea() / 0.005f));
+        return Spectrum(0.2f);
     }
 
     void addChild(const std::string &name, ConfigurableObject *child)
@@ -417,12 +479,11 @@ public:
         return (Float)count / SPATIAL_SAMPLE_NUM;
     }
 
-    Float count_direction(const Vector wi, const Normal m) const
+    Float count_direction(const Vector &wi, const Vector &wo) const
     {
         uint32_t count = 0, split_times = 1;
         std::vector<DirectionNode> queue;
-//        DirectionNode node;
-        ConicQuery query(wi, m, GAMMA_DIRECTION);
+        ConicQuery query(wi, wo, GAMMA_DIRECTION);
         queue.push_back(std::make_pair(DirectionTri(Point2(0.f, 0.f), Point2(PI_2, 0.f), Point2(0.f, PI_2)),
                                        (uint32_t)(DIRECTION_SAMPLE_NUM * set_p[0].x)));
         queue.push_back(std::make_pair(DirectionTri(Point2(PI_2, 0.f), Point2(PI, 0.f), Point2(0.f, PI_2)),
