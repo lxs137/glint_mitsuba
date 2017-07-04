@@ -15,7 +15,7 @@
 #define SPATIAL_SAMPLE_NUM 100000000
 #define DIRECTION_SAMPLE_NUM 100000000
 #define EPSILON_COUNT 0.1f
-#define GAMMA_DIRECTION 0.523598f
+#define GAMMA_DIRECTION 0.087266f
 #define PI 3.141593f
 #define PI_2 1.570795f
 #define _2_PI 6.28318f
@@ -30,7 +30,26 @@ struct DirectionTri
     DirectionTri(const Point2 &p1, const Point2 &p2, const Point2 &p3) {
         vertices[0] = p1, vertices[1] = p2, vertices[2] = p3;
     }
-
+    Point2 edge_center(int index) const
+    {
+        int i = index, j = (index + 1) % 3;
+        if(theta_is_PI_2(i))
+            return Point2(vertices[j].x, 0.5f * (vertices[i].y + vertices[j].y));
+        else if(theta_is_PI_2(j))
+            return Point2(vertices[i].x, 0.5f * (vertices[i].y + vertices[j].y));
+        else
+            return Point2(0.5f * (vertices[i].x + vertices[j].x), 0.5f * (vertices[i].y + vertices[j].y));
+    }
+    bool theta_is_PI_2(int index) const {
+        return fabsf(vertices[index].y - PI_2) < 1e-4;
+    }
+    Point2 operator[](int i) const
+    {
+        if(i < 0 || i > 3)
+            return vertices[0];
+        else
+            return vertices[i];
+    }
 };
 
 typedef std::pair<AABB2, uint32_t> SpatialNode;
@@ -59,7 +78,7 @@ struct ConicQuery{
         return dot(temp, _m) <= 0.f;
     }
 
-    bool is_intersect(Point2 *_tri) const
+    bool is_intersect(const DirectionTri &_tri) const
     {
         Point3 tri[3] = {Spherical2Cartesian(_tri[0]), Spherical2Cartesian(_tri[1]), Spherical2Cartesian(_tri[2])};
         Vector c, d;
@@ -85,12 +104,18 @@ struct ConicQuery{
         return false;
     }
 
-    Float overlap_area(Point2 *_tri) const
+    bool is_overlap(const DirectionTri &_tri) const
     {
-        Point3 tri[3] = {Spherical2Cartesian(_tri[0]), Spherical2Cartesian(_tri[1]), Spherical2Cartesian(_tri[2])};
-
+        if(is_intersect(_tri))
+            return true;
+        else
+            return is_in(_tri[0]) && is_in(_tri[1]) && is_in(_tri[2]);
     }
 
+    bool is_contain(const DirectionTri &_tri) const
+    {
+        return !is_intersect(_tri) && (is_in(_tri[0]) && is_in(_tri[1]) && is_in(_tri[2]));
+    }
 
 
 };
@@ -277,27 +302,22 @@ public:
         tex_box.expandBy(tex_diff[2]);
         tex_box.expandBy(tex_diff[3]);
 
-        Float p = count_spatial(tex_box);
-//        if(p > 1e-4) {
-//            oss << "Query: " << tex_box.toString() << endl;
-//            oss << "p: " << p << endl;
-//            SLog(EInfo, oss.str().c_str());
-//        }
-
-//        oss << "Hit: " << its.uv.toString() << endl
-//            << "Box: " << endl
-//            << tex_box.getSurfaceArea() << endl;
-//        SLog(EInfo, oss.str().c_str());
-
-
         MicrofacetDistribution distr(
                 m_type,
-                m_alphaU->eval(bRec.its).average(),
-                m_alphaV->eval(bRec.its).average(),
+                m_alphaU->eval(its).average(),
+                m_alphaV->eval(its).average(),
                 m_sampleVisible
         );
         Normal m = distr.sample(bRec.wi, sample, pdf);
-        bRec.wo = (2 * dot(bRec.wi, m) * Vector(m) - bRec.wi);
+
+//        Float p = count_spatial(tex_box);
+        Float p = count_direction(its.wi, m);
+        if(p > 1e-4) {
+            oss << "Query: " << m.toString() << endl;
+            oss << "p: " << p << endl;
+            SLog(EInfo, oss.str().c_str());
+        }
+
 
         bRec.eta = 1.0f;
         bRec.sampledComponent = 0;
@@ -397,10 +417,12 @@ public:
         return (Float)count / SPATIAL_SAMPLE_NUM;
     }
 
-    Float count_direction(const Vector wi, const Vector wo, const Normal m) const
+    Float count_direction(const Vector wi, const Normal m) const
     {
-        uint32_t count = 0, split_times = 0;
+        uint32_t count = 0, split_times = 1;
         std::vector<DirectionNode> queue;
+//        DirectionNode node;
+        ConicQuery query(wi, m, GAMMA_DIRECTION);
         queue.push_back(std::make_pair(DirectionTri(Point2(0.f, 0.f), Point2(PI_2, 0.f), Point2(0.f, PI_2)),
                                        (uint32_t)(DIRECTION_SAMPLE_NUM * set_p[0].x)));
         queue.push_back(std::make_pair(DirectionTri(Point2(PI_2, 0.f), Point2(PI, 0.f), Point2(0.f, PI_2)),
@@ -409,8 +431,46 @@ public:
                                        (uint32_t)(DIRECTION_SAMPLE_NUM * set_p[0].z)));
         queue.push_back(std::make_pair(DirectionTri(Point2(PI + PI_2, 0.f), Point2(_2_PI, 0.f), Point2(0.f, PI_2)),
                                        (uint32_t)(DIRECTION_SAMPLE_NUM * set_p[0].w)));
-        split_times++;
-        return 1.f;
+        bool is_intersect;
+        Float p;
+
+        while(!queue.empty())
+        {
+            DirectionNode node = queue.back();
+            queue.pop_back();
+            is_intersect = query.is_intersect(node.first);
+            if((!is_intersect && !(query.is_in(node.first[0]) && query.is_in(node.first[1]) && query.is_in(node.first[2])))
+               || node.second <= 0) {
+                // pass
+            }
+            else if(!is_intersect && (query.is_in(node.first[0]) && query.is_in(node.first[1]) && query.is_in(node.first[2]))) {
+                count += node.second;
+            }
+            else
+            {
+                p = count / SPATIAL_SAMPLE_NUM;
+                if(sqrt(node.second * p * (1 - p)) < EPSILON_COUNT * count) {
+                    count += node.second;
+                }
+                else {
+                    assert(split_times < SET_P_SIZE);
+                    queue.push_back(std::make_pair(
+                            DirectionTri(node.first.edge_center(0), node.first.edge_center(1), node.first.edge_center(2)),
+                            (uint32_t)(node.second * set_p[split_times].x)));
+                    queue.push_back(std::make_pair(
+                            DirectionTri(node.first.edge_center(0), node.first.edge_center(2), node.first[0]),
+                            (uint32_t)(node.second * set_p[split_times].y)));
+                    queue.push_back(std::make_pair(
+                            DirectionTri(node.first.edge_center(0), node.first.edge_center(1), node.first[1]),
+                            (uint32_t)(node.second * set_p[split_times].z)));
+                    queue.push_back(std::make_pair(
+                            DirectionTri(node.first.edge_center(1), node.first.edge_center(2), node.first[2]),
+                            (uint32_t)(node.second * set_p[split_times].w)));
+                    split_times++;
+                }
+            }
+        }
+        return (Float)count / DIRECTION_SAMPLE_NUM;
     }
 
     Shader *createShader(Renderer *renderer) const;
