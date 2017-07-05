@@ -284,17 +284,13 @@ public:
 
         /* Construct the microfacet distribution matching the
            roughness values at the current surface position. */
-        MicrofacetDistribution distr(
-                m_type,
-                m_alphaU->eval(bRec.its).average(),
-                m_alphaV->eval(bRec.its).average(),
-                m_sampleVisible
-        );
-//        Float D = count_spatial(tex_box);
-//        D *= count_direction(bRec.wi, bRec.wo);
-        Float D = count_direction(bRec.wi, bRec.wo);
-        oss << D <<std::endl;
-        SLog(EInfo, oss.str().c_str());
+        Float D = count_spatial(tex_box);
+        D *= count_direction(bRec.wi, bRec.wo);
+//        Float D = count_direction(bRec.wi, bRec.wo);
+//        oss << D <<std::endl;
+
+//        oss << "Eval: " << H.toString() << std::endl;
+//        SLog(EInfo, oss.str().c_str());
 
         /* Evaluate the microfacet normal distribution */
         if (D == 0)
@@ -303,7 +299,12 @@ public:
         /* Fresnel factor */
         const Spectrum F = fresnelConductorExact(dot(bRec.wi, H), m_eta, m_k) *
                            m_specularReflectance->eval(bRec.its);
-
+        MicrofacetDistribution distr(
+                m_type,
+                m_alphaU->eval(bRec.its).average(),
+                m_alphaV->eval(bRec.its).average(),
+                m_sampleVisible
+        );
         /* Smith's shadow-masking function */
         const Float G = distr.G(bRec.wi, bRec.wo, H);
 
@@ -321,7 +322,6 @@ public:
 
     Spectrum sample(BSDFSamplingRecord &bRec, const Point2 &sample) const
     {
-        SLog(EInfo, "Sample Intersection: ", bRec.its.toString());
         MicrofacetDistribution distr(
                 m_type,
                 m_alphaU->eval(bRec.its).average(),
@@ -334,44 +334,11 @@ public:
         bRec.eta = 1.0f;
         bRec.sampledComponent = 0;
         bRec.sampledType = EGlossyReflection;
-        return Spectrum(0.5f);
+        return Spectrum(1.0f);
     }
 
     Spectrum sample(BSDFSamplingRecord &bRec, Float &pdf, const Point2 &sample) const
     {
-//        std::ostringstream oss;
-//
-//        const Intersection &its = bRec.its;
-//        const TriMesh *mesh = static_cast<const TriMesh*>(its.shape);
-//        Triangle tri = mesh->getTriangles()[its.primIndex];
-//
-//        Vector ray_d = its.toWorld(-its.wi), d_diff[4];
-//        Point ray_o = its.p - its.t * ray_d, p_film = ray_o + camera->getNearClip() * ray_d,
-//                sample_diff[4], intersect_diff[4];
-//        Point2 tex_diff[4];
-//        Ray ray_diff[4];
-//        camera->get_sample_differential(p_film, sample_diff);
-//        TexPlane plane = TexPlane(its.p, Normal(its.toWorld(Vector(0, 0, 1.f))));
-//        // Sample texture coord for intersect diff
-//        plane.add_tri(mesh->getVertexPositions(), mesh->getVertexTexcoords(), tri.idx);
-//        for(int i = 0; i < 4; i++)
-//        {
-//            float t;
-//            d_diff[i] = (sample_diff[i] - ray_o) / camera->getNearClip();
-//            ray_diff[i] = Ray(ray_o, d_diff[i], 0.f);
-//            if(plane.intersect(ray_diff[i], t))
-//                intersect_diff[i] = (ray_diff[i])(t);
-//            else {
-//                SLog(EWarn, "Triangle is parallel with ray.");
-//                return Spectrum(0.5f);
-//            }
-//            plane.sample_tex_coord(intersect_diff[i], tex_diff[i]);
-//        }
-//        AABB2 tex_box = AABB2(tex_diff[0]);
-//        tex_box.expandBy(tex_diff[1]);
-//        tex_box.expandBy(tex_diff[2]);
-//        tex_box.expandBy(tex_diff[3]);
-
         MicrofacetDistribution distr(
                 m_type,
                 m_alphaU->eval(bRec.its).average(),
@@ -385,11 +352,7 @@ public:
         bRec.sampledComponent = 0;
         bRec.sampledType = EGlossyReflection;
 
-//        Float D = count_spatial(tex_box);
-//        D *= count_direction(bRec.wi, bRec.wo);
-
-//        return Spectrum(0.2f * (tex_box.getSurfaceArea() / 0.005f));
-        return Spectrum(0.2f);
+        return Spectrum(1.0f);
     }
 
     void addChild(const std::string &name, ConfigurableObject *child)
