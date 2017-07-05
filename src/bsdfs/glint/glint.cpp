@@ -179,11 +179,6 @@ public:
         camera = new PerspectiveCameraGlint(prop);
         camera->configure();
 
-//        ref<const AnimatedTransform> trans =  prop.getAnimatedTransform("toWorld", Transform());
-//        std::ostringstream oss;
-//        oss << "to world: " << trans.toString() << "sample2camera: "
-//            << endl << camera->m_sampleToCamera.toString() << endl;
-//        SLog(EInfo, oss.str().c_str());
     }
 
     Glint(Stream *stream, InstanceManager *manager) : BSDF(stream, manager)
@@ -269,7 +264,6 @@ public:
             if(plane.intersect(ray_diff[i], t))
                 intersect_diff[i] = (ray_diff[i])(t);
             else {
-                SLog(EWarn, "Triangle is parallel with ray.");
                 return Spectrum(0.5f);
             }
             plane.sample_tex_coord(intersect_diff[i], tex_diff[i]);
@@ -282,17 +276,8 @@ public:
         /* Calculate the reflection half-vector */
         Vector H = normalize(bRec.wo+bRec.wi);
 
-        /* Construct the microfacet distribution matching the
-           roughness values at the current surface position. */
         Float D = count_spatial(tex_box);
         D *= count_direction(bRec.wi, bRec.wo);
-//        Float D = count_direction(bRec.wi, bRec.wo);
-//        oss << D <<std::endl;
-
-//        oss << "Eval: " << H.toString() << std::endl;
-//        SLog(EInfo, oss.str().c_str());
-
-        /* Evaluate the microfacet normal distribution */
         if (D == 0)
             return Spectrum(0.0f);
 
