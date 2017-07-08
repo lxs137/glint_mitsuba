@@ -310,6 +310,29 @@ public:
 	/// Return a string representation
 	std::string toString() const;
 
+	std::string triangleToString(uint32_t *index) const
+	{
+		std::ostringstream oss;
+		oss << "Triangle[" << endl
+			<< "	Vertex:[" << endl
+			<< "		" << m_positions[index[0]].toString() << endl
+			<< "		" << m_positions[index[1]].toString() << endl
+			<< "		" << m_positions[index[2]].toString() << endl
+            << "    ]" << endl
+			<< "	Normal:[" << endl
+			<< "		" << m_normals[index[0]].toString() << endl
+			<< "		" << m_normals[index[1]].toString() << endl
+			<< "		" << m_normals[index[2]].toString() << endl
+            << "    ]" << endl
+			<< "	TextureCoord:[" << endl
+			<< "		" << m_texcoords[index[0]].toString() << endl
+			<< "		" << m_texcoords[index[1]].toString() << endl
+			<< "		" << m_texcoords[index[2]].toString() << endl
+            << "    ]" << endl
+            << "]" << endl;
+        return oss.str();
+	}
+
 	//! @}
 	// =============================================================
 

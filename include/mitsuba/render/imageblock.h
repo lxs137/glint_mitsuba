@@ -198,7 +198,7 @@ public:
 					oss << ", ";
 			}
 			oss << "]";
-			Log(EWarn, "%s", oss.str().c_str());
+//			Log(EWarn, "%s", oss.str().c_str());
 		}
 		return false;
 	}
